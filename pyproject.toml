@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[project]
+name = "code-context"
+version = "0.1.0"
+description = "Smart codebase context provider for LLMs"
+requires-python = ">=3.7"
+dependencies = [
+"click>=8.0.0"
+]
+[project.scripts]
+code-context = "code_context.cli:cli"
+[tool.hatch.build.targets.wheel]
+packages = ["code_context"]
