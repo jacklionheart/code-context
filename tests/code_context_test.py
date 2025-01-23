@@ -98,3 +98,65 @@ def test_raw_format(monkeypatch):
         assert result.exit_code == 0
         assert "<documents>" not in result.output
         assert "main.py" in result.output
+
+def test_direct_path_resolution(monkeypatch):
+    """Tests that direct paths work without requiring auto-prefixing."""
+    with tmp("src") as src:
+        monkeypatch.setenv("CODE_CONTEXT_ROOT", str(src))
+        create_test_codebase(src, {
+            "manabot/env/config.py": "settings = {}",
+            "manabot/README.md": "# Direct Structure"
+        })
+        
+        runner = CliRunner()
+        result = runner.invoke(cli, ["manabot/env"])
+        assert result.exit_code == 0
+        assert "config.py" in result.output
+        assert "# Direct Structure" in result.output
+
+def test_auto_prefixed_path_resolution(monkeypatch):
+    """Tests that auto-prefixing works when direct path doesn't exist."""
+    with tmp("src") as src:
+        monkeypatch.setenv("CODE_CONTEXT_ROOT", str(src))
+        create_test_codebase(src, {
+            "manabot/manabot/env/config.py": "settings = {}",
+            "manabot/README.md": "# Prefixed Structure"
+        })
+        
+        runner = CliRunner()
+        result = runner.invoke(cli, ["manabot/env"])
+        assert result.exit_code == 0
+        assert "config.py" in result.output
+        assert "# Prefixed Structure" in result.output
+
+def test_root_files_access(monkeypatch):
+    """Tests access to files in the root codebase directory."""
+    with tmp("src") as src:
+        monkeypatch.setenv("CODE_CONTEXT_ROOT", str(src))
+        create_test_codebase(src, {
+            "manabot/README.md": "# Root README",
+            "manabot/CMakeLists.txt": "cmake_config",
+            "manabot/manabot/main.py": "print('main')"
+        })
+        
+        runner = CliRunner()
+        result = runner.invoke(cli, ["manabot"])
+        assert result.exit_code == 0
+        assert "# Root README" in result.output
+        assert "cmake_config" in result.output
+        assert "main.py" in result.output
+
+def test_prefers_direct_over_prefixed(monkeypatch):
+    """Tests that direct paths are preferred when both exist."""
+    with tmp("src") as src:
+        monkeypatch.setenv("CODE_CONTEXT_ROOT", str(src))
+        create_test_codebase(src, {
+            "manabot/env/direct.py": "direct = True",
+            "manabot/manabot/env/prefixed.py": "prefixed = True"
+        })
+        
+        runner = CliRunner()
+        result = runner.invoke(cli, ["manabot/env"])
+        assert result.exit_code == 0
+        assert "direct.py" in result.output
+        assert "prefixed.py" not in result.output

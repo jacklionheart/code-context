@@ -22,7 +22,16 @@ def find_readmes(path: Path) -> List[Path]:
     return sorted(readmes)  # Sort to maintain consistent order
 
 def resolve_codebase_path(path_str: str) -> Path:
-    """Convert path string to absolute path following codebase conventions."""
+    """Convert path string to absolute path following codebase conventions.
+    
+    Handles three cases:
+    1. Root codebase access (e.g., "manabot")
+    2. Direct subpath access (e.g., "manabot/env")
+    3. Auto-prefixed access (e.g., "manabot/env" -> "manabot/manabot/env")
+    
+    The function first tries direct access, and if the path doesn't exist,
+    it attempts auto-prefixing with the codebase name.
+    """
     parts = path_str.split('/')
     if not parts:
         raise click.BadArgumentUsage("Empty path provided")
@@ -31,17 +40,26 @@ def resolve_codebase_path(path_str: str) -> Path:
     codebase = parts[0]
     subpath = parts[1:]
     
-    # Special cases that don't get auto-prefixed
+    # Special cases
     if len(subpath) == 0:  # Root codebase directory
         return code_root / codebase
     if len(subpath) == 1 and subpath[0] == "tests":  # Tests directory
         return code_root / codebase / "tests"
         
-    # Auto-prefix other paths with codebase name
-    if subpath and subpath[0] != codebase:
-        subpath.insert(0, codebase)
+    # Try direct path first
+    direct_path = code_root / codebase / "/".join(subpath)
+    if direct_path.exists():
+        return direct_path
         
-    return code_root / codebase / "/".join(subpath)
+    # If direct path doesn't exist, try auto-prefixing
+    if subpath and subpath[0] != codebase:
+        prefixed_path = code_root / codebase / codebase / "/".join(subpath)
+        if prefixed_path.exists():
+            return prefixed_path
+            
+    # Return the direct path as the default, even if it doesn't exist
+    # This allows error handling to work consistently
+    return direct_path
 
 def copy_to_clipboard(content: str) -> None:
     try:
