@@ -36,10 +36,19 @@ def test_basic_usage(monkeypatch):
         })
         
         runner = CliRunner()
+        # Default invocation -> produces XML by default
         result = runner.invoke(cli, ["manabot"])
         assert result.exit_code == 0
+        
+        # Basic checks
         assert "README.md" in result.output
         assert "main.py" in result.output
+        
+        # New readme-specific checks in XML output
+        # Make sure the README content goes in <instructions> and is flagged as <type>readme</type>
+        assert "<type>readme</type>" in result.output
+        assert "<instructions>" in result.output
+        assert "# Manabot" in result.output  # Confirm the readme text is present
 
 def test_multiple_paths(monkeypatch):
     with tmp("src") as src:
@@ -82,9 +91,16 @@ def test_hierarchical_readme(monkeypatch):
         runner = CliRunner()
         result = runner.invoke(cli, ["manabot/env/data"])
         assert result.exit_code == 0
+        
+        # Confirm hierarchical readme content
         assert "# Root docs" in result.output
         assert "# Env docs" in result.output
         assert "sample.txt" in result.output
+        
+        # Also confirm they are recognized as readme in XML
+        # You may check for readme markers multiple times if you want to ensure multiple READMEs are detected.
+        assert result.output.count("<type>readme</type>") >= 2
+        assert result.output.count("<instructions>") >= 2
 
 def test_raw_format(monkeypatch):
     with tmp("src") as src:
@@ -96,8 +112,29 @@ def test_raw_format(monkeypatch):
         runner = CliRunner()
         result = runner.invoke(cli, ["manabot", "-r"])
         assert result.exit_code == 0
+        
+        # Raw format should not have <documents> or XML tags
         assert "<documents>" not in result.output
         assert "main.py" in result.output
+
+def test_raw_format_with_readme(monkeypatch):
+    """Ensure readmes get the ### README START ### block in raw mode."""
+    with tmp("src") as src:
+        monkeypatch.setenv("CODE_CONTEXT_ROOT", str(src))
+        create_test_codebase(src, {
+            "manabot/README.md": "# Raw readme",
+            "manabot/manabot/main.py": "print('hello')",
+        })
+        
+        runner = CliRunner()
+        result = runner.invoke(cli, ["manabot", "-r"])
+        assert result.exit_code == 0
+        
+        # Check for the special readme markers
+        assert "### README START ###" in result.output
+        assert "### README END ###" in result.output
+        # Confirm that the readme content is present inside those markers
+        assert "# Raw readme" in result.output
 
 def test_direct_path_resolution(monkeypatch):
     """Tests that direct paths work without requiring auto-prefixing."""

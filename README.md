@@ -6,7 +6,9 @@ Built on [files-to-prompt](https://github.com/simonw/files-to-prompt).
 
 ## Features
 
-### Hierarchical README inclusion
+### README Highlighting
+READMEs are pulled out into a separate section of the output at the top of the context.
+
 If there is a README in a containing directory for any paths provided, it will be included.
 For example, if you provide `codebase/env/data`, `codebase/env/README.md` will be included.
 
