@@ -20,12 +20,6 @@ For example, if you provide `codebase/env/data`, `codebase/env/README.md` will b
     - Tests directory is always at `codebase/tests`
     - Root files (like README.md) are accessed directly
 
-### File filtering
-Filter included files by extension:
-```bash
-code-context -e .py -e .js manabot  # only Python and JS files
-```
-
 ## Installation
 
 from root:
@@ -35,9 +29,9 @@ pip install -e .
 
 ## Usage
 
-Copy `manabot` codebase to clipboard:
+Copy `manabot` codebase to clipboard (OS X only):
 ```bash
-code-context -c manabot
+code-context -p manabot
 ```
 
 Copy multiple codebases and directories:
@@ -45,9 +39,9 @@ Copy multiple codebases and directories:
 code-context manabot,managym/agent,managym/tests
 ```
 
-Specify generate output stream instead of pbcopy:
+Filter to python and use raw (non-XML) output
 ```bash
-code-context -o manabot/env > context.txt
+code-context -e .py -r manabot 
 ```
 
 ## Directory Structure Assumptions
