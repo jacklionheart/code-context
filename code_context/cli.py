@@ -1,10 +1,55 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import List, Set, Optional, Tuple, Callable
+from typing import List, Set, Optional, Tuple, Callable, Dict
 from fnmatch import fnmatch
+from dataclasses import dataclass
 
 import click
+
+@dataclass
+class Document:
+    """Represents a document to be included in the output."""
+    index: int
+    source: str
+    content: str
+    is_readme: bool
+    depth: int  # Store depth for sorting
+    type: Optional[str] = None
+    instructions: Optional[str] = None
+
+    @staticmethod
+    def from_file(
+        file_path: str,
+        index: int,
+        processed_files: Set[str],
+        extensions: Optional[Tuple[str, ...]] = None
+    ) -> Optional['Document']:
+        """Create a Document from a file if it meets criteria."""
+        if file_path in processed_files:
+            return None
+        if extensions and not any(file_path.endswith(ext) for ext in extensions):
+            return None
+
+        try:
+            with open(file_path, "r") as f:
+                is_readme = file_path.endswith("README.md")
+                depth = len(Path(file_path).parts)
+                doc = Document(
+                    index=index,
+                    source=file_path,
+                    content=f.read(),
+                    is_readme=is_readme,
+                    depth=depth
+                )
+                if is_readme:
+                    doc.type = "readme"
+                    doc.instructions = doc.content
+                processed_files.add(file_path)
+                return doc
+        except UnicodeDecodeError:
+            click.echo(f"Warning: Skipping file {file_path} due to UnicodeDecodeError", err=True)
+            return None
 
 def get_code_context_root() -> Path:
     """Return the root directory for code context, defaulting to ~/src."""
@@ -14,7 +59,6 @@ def find_readmes(path: Path) -> List[Path]:
     """
     Walk from `path` upward to `CODE_CONTEXT_ROOT`, collecting README.md files.
     Then add any top-level README.md if not already included.
-
     Sort so that "highest-level" (fewest path parts) comes first,
     and, at the same depth, alphabetical order by path name.
     """
@@ -73,10 +117,7 @@ def resolve_codebase_path(path_str: str) -> Path:
     return direct_path
 
 def copy_to_clipboard(content: str) -> None:
-    """
-    If on macOS (with pbcopy), copy output to clipboard;
-    otherwise skip with a warning.
-    """
+    """Copy content to clipboard on macOS."""
     try:
         process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
         process.communicate(content.encode('utf-8'))
@@ -95,10 +136,7 @@ def read_gitignore(path: str) -> List[str]:
     return []
 
 def should_ignore(path: str, gitignore_rules: List[str]) -> bool:
-    """
-    Check if `path` should be ignored according to .gitignore patterns 
-    (naive: only matches filename or directory name).
-    """
+    """Check if path should be ignored according to .gitignore patterns."""
     fname = os.path.basename(path)
     for rule in gitignore_rules:
         if fnmatch(fname, rule):
@@ -107,62 +145,26 @@ def should_ignore(path: str, gitignore_rules: List[str]) -> bool:
             return True
     return False
 
-def process_files(
+def collect_files(
     path: str,
-    writer: Callable[[str], None],
     gitignore_rules: List[str],
-    xml_format: bool,
     processed_files: Set[str],
+    next_index: int,
     extensions: Optional[Tuple[str, ...]] = None
-) -> None:
-    """
-    Recursively process files/folders at `path`.
-    - If `xml_format` is True => produce <document> tags.
-    - If not => produce raw text with optional README markers.
-    """
-    def print_file(file_path: str, content: str, is_readme: bool) -> None:
-        """Output either raw or XML, marking readmes appropriately."""
-        if file_path in processed_files:
-            return
-        if extensions and not any(file_path.endswith(ext) for ext in extensions):
-            return
+) -> List[Document]:
+    """Recursively collect files into Document objects."""
+    documents: List[Document] = []
+    current_index = next_index
 
-        processed_files.add(file_path)
-
-        if not xml_format:
-            # Raw format
-            writer(file_path)
-            writer("---")
-            if is_readme:
-                writer("### README START ###")
-            writer(content)
-            if is_readme:
-                writer("### README END ###")
-            writer("")
-            writer("---")
-        else:
-            # XML format
-            doc_index = len(processed_files)
-            writer(f'<document index="{doc_index}">')
-            writer(f"<source>{file_path}</source>")
-            if is_readme:
-                writer("<type>readme</type>")
-                writer("<instructions>")
-                writer(content)
-                writer("</instructions>")
-            else:
-                writer("<document_content>")
-                writer(content)
-                writer("</document_content>")
-            writer("</document>")
+    def process_file(file_path: str) -> None:
+        nonlocal current_index
+        doc = Document.from_file(file_path, current_index, processed_files, extensions)
+        if doc:
+            documents.append(doc)
+            current_index += 1
 
     if os.path.isfile(path):
-        try:
-            with open(path, "r") as f:
-                is_readme = path.endswith("README.md")
-                print_file(path, f.read(), is_readme)
-        except UnicodeDecodeError:
-            click.echo(f"Warning: Skipping file {path} due to UnicodeDecodeError", err=True)
+        process_file(path)
     elif os.path.isdir(path):
         for root, dirs, files in os.walk(path):
             # Skip hidden
@@ -174,13 +176,51 @@ def process_files(
             files = [f for f in files if not should_ignore(os.path.join(root, f), gitignore_rules)]
 
             for file_name in sorted(files):
-                file_path = os.path.join(root, file_name)
-                try:
-                    with open(file_path, "r") as f:
-                        is_readme = (file_name == "README.md")
-                        print_file(file_path, f.read(), is_readme)
-                except UnicodeDecodeError:
-                    click.echo(f"Warning: Skipping file {file_path} due to UnicodeDecodeError", err=True)
+                process_file(os.path.join(root, file_name))
+
+    return documents
+
+def format_document(doc: Document, raw: bool) -> str:
+    """Format a document according to output format."""
+    if raw:
+        # For raw format, use a strict document structure:
+        # 1. Path on a single line
+        # 2. Opening separator
+        # 3. README markers if needed
+        # 4. Content
+        # 5. Closing separator
+        lines = [
+            doc.source,
+            "---"
+        ]
+        if doc.is_readme:
+            lines.append("### README START ###")
+        lines.append(doc.content)
+        if doc.is_readme:
+            lines.append("### README END ###")
+        lines.append("---")
+    else:
+        lines = [
+            f'<document index="{doc.index}">',
+            f"<source>{doc.source}</source>"
+        ]
+        if doc.type:
+            lines.append(f"<type>{doc.type}</type>")
+        if doc.instructions:
+            lines.extend([
+                "<instructions>",
+                doc.instructions,
+                "</instructions>"
+            ])
+        else:
+            lines.extend([
+                "<document_content>",
+                doc.content,
+                "</document_content>"
+            ])
+        lines.append("</document>")
+    
+    return "\n".join(lines)
 
 @click.command()
 @click.argument('paths')
@@ -193,12 +233,8 @@ def cli(paths: str, pbcopy: bool, raw: bool, extension: Tuple[str, ...]) -> None
     - PATHS can be comma-separated. Example: "manabot,managym/tests"
     """
     processed_files: Set[str] = set()
-    content: List[str] = []
-    writer: Callable[[str], None] = lambda s: content.append(s)
-
-    # XML container
-    if not raw:
-        writer("<documents>")
+    documents: List[Document] = []
+    next_index = 1
 
     for path_str in paths.split(','):
         path_str = path_str.strip()
@@ -207,31 +243,55 @@ def cli(paths: str, pbcopy: bool, raw: bool, extension: Tuple[str, ...]) -> None
             click.echo(f"Warning: Path does not exist: {path_obj}", err=True)
             continue
 
-        # 1) Include parent READMEs in top->down order
+        # First process READMEs
+        readme_docs = []
         for readme_path in find_readmes(path_obj):
-            process_files(
+            readme_docs.extend(collect_files(
                 path=str(readme_path),
-                writer=writer,
-                gitignore_rules=[],  # typically do not .gitignore parent-level readmes
-                xml_format=not raw,
+                gitignore_rules=[],
                 processed_files=processed_files,
+                next_index=next_index,
                 extensions=extension
-            )
+            ))
+            next_index += len(readme_docs)
 
-        # 2) Then include the actual path
-        process_files(
+        # Then process regular files
+        regular_docs = collect_files(
             path=str(path_obj),
-            writer=writer,
             gitignore_rules=read_gitignore(str(path_obj)),
-            xml_format=not raw,
             processed_files=processed_files,
+            next_index=next_index,
             extensions=extension
         )
+        next_index += len(regular_docs)
 
+        # Add both to our document list
+        documents.extend(readme_docs)
+        documents.extend(regular_docs)
+
+    # Sort documents ensuring READMEs come first
+    documents.sort(key=lambda d: (
+        not d.is_readme,  # False sorts before True, so READMEs come first
+        d.depth,         # Then by directory depth
+        d.source        # Then by path alphabetically
+    ))
+
+    # Re-index documents to ensure sequential numbering
+    for i, doc in enumerate(documents, 1):
+        doc.index = i
+
+    # Generate output
+    output_lines = []
     if not raw:
-        writer("</documents>")
+        output_lines.append("<documents>")
+    
+    for doc in documents:
+        output_lines.append(format_document(doc, raw))
+    
+    if not raw:
+        output_lines.append("</documents>")
 
-    output_content = "\n".join(content)
+    output_content = "\n".join(output_lines)
 
     if pbcopy:
         copy_to_clipboard(output_content)
